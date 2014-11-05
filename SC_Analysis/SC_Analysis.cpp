@@ -8,6 +8,8 @@
 #include <cmath>
 #include <list>
 #include <algorithm>
+#include <math.h>
+#include <tuple>
 
 using namespace std;
 
@@ -15,6 +17,17 @@ enum VideoType
 {
 	SIDE,
 	FRONT
+};
+enum KneeError
+{
+	CAVING_IN,
+	POINTING_OUT,
+	KNEE_GOOD
+};
+enum ShoulderError{
+	LEFT_HIGHER,
+	RIGHT_HIGHER,
+	SHOULDERS_GOOD
 };
 static const float FRACTION_GOOD = 0.9f;
 
@@ -26,55 +39,79 @@ Point operator+(const Point & lhs, const Point & rhs);
 
 //Point class
 struct Point{
-	float x, y;
+	float x, y, z;
 
 	Point(const float rectangle[]){
 		x = rectangle[0] + rectangle[2] / 2;
 		y = rectangle[1] + rectangle[3] / 2;
+		z = 0;
 	}
-	Point(float x = 0, float y = 0) : x(0), y(0){}
+	Point(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z){}
 
-	float Dot(const Point& rhs){
-		return x * rhs.x + y * rhs.y;
+	float Dot(const Point& rhs) const{
+		return x * rhs.x + y * rhs.y + z * rhs.z;
 	}
-	float Norm(){
+	float Norm() const{
 		return sqrt((*this).Dot(*this));
 	}
 
 	Point & operator=(const Point &rhs){
 		x = rhs.x;
 		y = rhs.y;
+		z = rhs.z;
 		return *this;
 	}
 	Point & operator+=(const Point &rhs){
 		Point p = *this + rhs;
 		x = p.x;
 		y = p.y;
+		z = p.z;
 		return *this;
 	}
 	Point operator / (const float value){
-		return Point(x / value, y / value);
+		return Point(x / value, y / value, z / value);
+	}
+	Point operator * (const float value){
+		return Point(x * value, y * value, z * value);
 	}
 	Point & operator/=(const float value){
 		x /= value;
 		y /= value;
+		z /= value;
 		return *this;
+	}
+	Point & Transform(const Point& xhat, const Point& yhat){
+		//Fill this
+		x = (*this).Dot(xhat);
+		y = (*this).Dot(yhat);
+		return *this;
+	}
+	Point CrossProd(const Point& rhs){
+		float xVal, yVal, zVal;
+		xVal = y * rhs.z - (z * rhs.y);
+		yVal = -(x * rhs.z - (z * rhs.x));//Because determinant goes like 1 -1 1...
+		zVal = x * rhs.y - (y * rhs.z);
+		return Point(xVal, yVal, zVal);
 	}
 };
 
 //Non-member point operators
 Point operator+(const Point& lhs, const Point& rhs){
-	return Point(lhs.x + rhs.x, lhs.y + rhs.y);
+	return Point(lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z);
 }
 Point operator-(const Point& lhs, const Point& rhs){
-	return Point(lhs.x - rhs.x, lhs.y - rhs.y);
+	return Point(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z);
 }
 struct LHSYLess{
 	bool operator()(const Point& lhs, const Point& rhs){
-		if (lhs.y == rhs.y)
-			return lhs.x < rhs.x;
+		if (lhs.z == rhs.z){
+			if (lhs.y == rhs.y)
+				return lhs.x < rhs.x;
+			else
+				return lhs.y < rhs.y;
+		}
 		else
-			return lhs.y < rhs.y;
+			return lhs.z < rhs.z;
 	}
 }LHSLessObj;
 
@@ -85,17 +122,14 @@ struct Frame{
 	int number;
 
 	//Reads in line containing points
-	Frame(int number, const string &fromFile):number(number){
-		size_t start = 0, end = 0;
-		short count = 0;
-		float temp[2];
-		while ((end = fromFile.find(',',start))!= fromFile.size() - 1){
-			temp[count++] = stof(fromFile.substr(start, end));
-			if (count == 2){
-				pointList.push_back(Point(temp));
-				count = 0;
-			}
-			start = end + 1;
+	Frame(const string &fromFile){
+		int middleComma, lparen, rparen, start = 0;
+		number = stof(fromFile.substr(0, fromFile.find(',', 0)));
+		while ((lparen = fromFile.find('(',start))!= string::npos){
+			rparen = fromFile.find(',', start);
+			middleComma = fromFile.find(',', lparen);
+			pointList.push_back(Point(stof(fromFile.substr(lparen + 1, middleComma - (lparen + 1))), stof(fromFile.substr(middleComma + 1, rparen - (middleComma + 1)))));
+			start = rparen + 1;
 		}
 	}
 	Frame(int number, int size = 2) :pointList(vector<Point>(size)), number(number){}
@@ -103,44 +137,183 @@ struct Frame{
 	void Organize(const Functor& f){
 		sort(pointList.begin(), pointList.end(), f);
 	}
+	Point& operator[](int i) {
+		if (i < 0){
+			i += pointList.size();
+		}
+		return pointList[i];
+	}
 };
 
 #pragma endregion
 
+struct SetupStruct{
+	//void Setup(const vector<Frame>& dirty, const int startFrame, const int numCalPts,
+	//	float& footDist, float& rLeft, float& rRight, Point& lFootVec, Point& rFootVec)
+	float footDist;
+	float  rLeft;
+	float rRight;
+	Point lFootVec;
+	Point rFootVec;
+	Point relRShoulder;
+	SetupStruct(): footDist(0), rLeft(0), rRight(0){}//Double check this
+};
+struct FormErrors{
+	KneeError leftKnee;
+	KneeError rightKnee;
+	float shoulderBalance;
+};
+
 #pragma region Front 
-//Using a dot product, find the cosine of the angle of rotation of a pair of points from their "equilibrium" state.
-float CosAngle(const Point& actL, const Point& actR, const Point& avgL, const Point& avgR){
-	Point actC = (actL + actR) / 2, avgC = (avgL + avgR) / 2;
-	Point actRPrime = actR - actC, avgRPrime = avgR - avgC;
-	return (actRPrime).Dot(avgRPrime) / (actRPrime.Norm() * avgRPrime.Norm());
-}
+//Setup:
+//Save average distance ( few points ) for each leg.
+//These points are radii for the sphere
+//Using average shoulder distance, calculate the foot angles
+//Find CrossProd of vector from foot to knee (foot normalized to origin) and outgoing angles along z/x axis. z component should be positive for both feet/
+//	x should be positive for right and not for left (double check this)
+//Loop:
+//Transform points (foot transform)
+//For both foot:
+//z = sqrt(r^2 - (x^ + y^2))
+//Take DP of [x y z] vector and vector perp to plane of circle.
+//Calculate the magnitude of this vector, then subtract this from the whole mag.
+//Flag bad form if z distances are not the same within some threshold
+//Flag bad form if |magnitude in plane of circle - r| < some threshold 
 
-//Calculate the fractional distance difference between reference and current points.
-float FracDistDiff(const Point& actL, const Point& actR, const Point& avgL, const Point& avgR){
-	float actLen = (actL - actR).Norm(), avgLen = (avgL - avgR).Norm();
-	return abs(actLen - avgLen) / avgLen;
-}
-#pragma endregion 
-
-#pragma region Both
-//Calculates the average of each point within a certain window. Can be used to calculate calibration values, and to find "smoothed" locations when person is moving(?).
-//	Modification to make: Find the mean AND the variance of the points, to enable avoiding using an arbitrary threshold value.
-vector<Point> AvgVals(const vector<Frame>& input, const int startFrame, const int numFrames){
-	vector<Point> ret = vector<Point>();
-	vector<Point> avgPoints = vector<Point>(6);
-	int length = input[0].pointList.size();
-	for (int i = startFrame; i < startFrame + numFrames; ++i){
-		for (int j = 0; j < length; ++j){
-			avgPoints[j] += input[i].pointList[j];
-		}
+//Sets up the necessary vectors for calculation in FontLoop
+SetupStruct Setup(vector<Frame>& dirty, const int startFrame, const int numCalPts){
+	SetupStruct ret;
+	ret.rLeft = 0;
+	ret.rRight = 0;
+	Point leftKnee = Point();
+	Point rightKnee = Point();
+	Point xhat = Point();
+	Point yhat = Point();
+	Point leftFoot = Point();
+	Point rightFoot = Point();
+	Point leftShoulder = Point();
+	Point rightShoulder = Point();
+	float dShoulder = 0;
+	//Sum up points for some period of time to get an average
+	for (int i = startFrame; i < startFrame + numCalPts; ++i){
+		leftFoot += dirty[i][-2];
+		rightFoot += dirty[i][-1];
+		leftKnee += (dirty[i][-4]);
+		rightKnee += (dirty[i][-3]);
+		leftShoulder += dirty[i][0];
+		rightShoulder += dirty[i][1];
 	}
-	for (int i = 0; i < length; ++i){
-		avgPoints[i] /= (float)numFrames;//Cast for happy compiler.
-		ret.push_back(avgPoints[i]);
-	}
+	leftFoot /= numCalPts;
+	rightFoot /= numCalPts;
+	leftKnee /= numCalPts;
+	rightKnee /= numCalPts;
+	dShoulder = ((leftShoulder - rightShoulder) / numCalPts).Norm;
+	//Find radii and foot width
+	ret.rLeft = (leftFoot - leftKnee).Norm();
+	ret.rRight = (rightFoot - rightKnee).Norm();
+	ret.footDist = (leftFoot - rightFoot).Norm();
+	
+	//Calculate new basis vectors
+	Point xhat = Point();
+	Point yhat = Point();
+	NewBasis(leftFoot, rightFoot, xhat, yhat);
+	
+	//Transform points so  that the left foot is the origin. Translate all points, then rotate.
+	leftKnee = (leftKnee - leftFoot).Transform(xhat, yhat);
+	rightKnee = (rightKnee - leftFoot).Transform(xhat, yhat);
+	rightFoot = (rightFoot - leftFoot).Transform(xhat, yhat);
+	leftShoulder = (leftShoulder - leftFoot).Transform(xhat, yhat);
+	rightShoulder = (rightShoulder - leftFoot).Transform(xhat, yhat);
+	leftFoot = Point(0 , 0);
+	
+	//Transform right knee so its origin is at rightfoot.
+	rightKnee = rightKnee - rightFoot;
+	//Find vector to take CrossProd with, take CrossProds, and return these. These vectors should point AWAY from the body.
+	ret.lFootVec = FootVector(dShoulder, ret.footDist, true).CrossProd(leftKnee);
+	ret.rFootVec = FootVector(dShoulder, ret.footDist, false).CrossProd(rightKnee);
+	
+	//Find relative right shoulder
+	ret.relRShoulder = leftShoulder - rightShoulder;
 	return ret;
 }
 
+//Finds the directional vector of the foot.
+Point FootVector(const float dShoulder, const float dFeet, bool leftFoot){
+	float sinThetaFoot = (dFeet / (2 * dShoulder));
+	float cosThetaFoot = sqrt(1 - sinThetaFoot * sinThetaFoot);
+	int xSign = -1 * leftFoot;
+	return Point(xSign * sinThetaFoot, 0, -cosThetaFoot);
+}
+
+//Constructs two new basis vectors, where points from left-right foot, and the other points orthogonal to it, predominatly in the y direction.
+void NewBasis(const Point& leftFoot, const Point& rightFoot, Point& xhat, Point& yhat){
+	Point x = rightFoot - leftFoot;
+	xhat = x / x.Norm();
+	yhat.x = -xhat.y;
+	yhat.y = xhat.x;
+}
+
+//Normalizes a frame, making the origin the left foot, and making the right foot at (0, dFoot)
+void NormalizeFrame(Frame& frame, const float dFoot){
+	//Last point is leftfoot, second to last point is right (video's left/right)
+	float curDist = (frame[-1]- frame[-2]).Norm();
+	float scaleFactor = dFoot / curDist;//If curdist < originalDist, the points recorded are too close, so make them further apart.
+	//Frame ret = Frame(frame);//Check this copy constructor works right.
+	Point origin = Point(frame[-2]) * scaleFactor;
+	Point xhat = Point(), yhat = Point();
+	NewBasis(frame[-2], frame[-1], xhat, yhat);
+	for (int i = 0; i < frame.pointList.size(); ++i){
+		//Scale, then subtract origin, transform into new space.
+		Point newP = ((Point(frame[i]) *  scaleFactor) - origin).Transform(xhat, yhat);
+		frame[i] = newP;
+	}
+}
+
+//Checks shoulder for tilt.
+ShoulderError CheckShoulder(Frame& normalizedFrame, const SetupStruct& s, const float thresh){
+	Point relRCurrent = normalizedFrame[1] - normalizedFrame[0];
+	float sinTheta = (relRCurrent.CrossProd(s.relRShoulder) / (relRCurrent.Norm() * s.relRShoulder.Norm())).z;
+	if (abs(sinTheta) > thresh){
+		if (sinTheta < 0)
+			return LEFT_HIGHER;
+		else
+			return RIGHT_HIGHER;
+	}
+	else
+		return SHOULDERS_GOOD;
+
+}
+
+//Check if knees follow the path that they're supposed to follow
+KneeError CheckKnee(const Point& calibratedKnee, const Point& plane, const float radius, const float thresh){
+	Point fullPoint = Point(calibratedKnee);
+	fullPoint.z = sqrt(radius * radius - fullPoint.Dot(fullPoint));
+	float perpVal = fullPoint.Dot(plane);
+	if (abs(perpVal) > thresh)
+	{
+		if (perpVal < 0)
+			return CAVING_IN;
+		else
+			return POINTING_OUT;
+	}
+	else
+		return KNEE_GOOD;
+}
+
+//Execute this function each cycle.
+FormErrors& FrontLoop(Frame& frame, const SetupStruct s, const float thresh){
+	FormErrors ret;
+	//Frame now has left foot at (0, 0) and right foot at (dFoot, 0)
+	NormalizeFrame(frame, s.footDist);
+	ret.leftKnee = CheckKnee(frame[-4], s.lFootVec, s.rLeft, thresh);
+	ret.rightKnee = CheckKnee(frame[-3] - frame[-1], s.rFootVec, s.rRight, thresh);
+	ret.shoulderBalance = CheckShoulder(frame, s);
+	return ret;
+}
+
+#pragma endregion 
+
+#pragma region Both
 //Reads csv of point data. There should be a trailing comma.
 vector<Frame> ReadFile(const string &filename){
 	vector<Frame> dirty = vector<Frame>();
@@ -148,59 +321,11 @@ vector<Frame> ReadFile(const string &filename){
 	string line;
 	int count = 0;
 	while (getline(ifs, line)){
-		dirty.push_back(Frame(count++, line));
+		dirty.push_back(Frame(line));
 	}
 	ifs.close();
 	return dirty;
 }
-//nan-ifies invalid entries and makes all frames maintain the same order of points
-	//int threshFrames-max number of frames to consider when determining the initial point locations
-vector<Frame> SanitizeInput(vector<Frame>& dirty, const int threshFrames, const VideoType type){
-	vector<Frame> ret = vector<Frame>();
-	if (type == SIDE){
-		int numPts = 5;//Bar, spine-mid, hip, knee, ankle.
-		int index = 0;
-		//Ignore all points that don't have all 5 points.
-		while (dirty[index].pointList.size() < numPts)
-			++index;
-		//By some magic, find the first good frame starting with index.
-		while (index != dirty.size()){
-			index = FindFirstGoodFrame(dirty, index, threshFrames, numPts);
-			//Start adding points, add the closest point to each slot, and fill with NaN if not possible.
-			index = FillAllPossilbe(dirty, ret, index, threshFrames, numPts);
-		}
-	}
-	return ret;
-}
-int FindFirstGoodFrame(vector<Frame>& dirty, int index, const int threshFrames, const int numPts){
-	//Assume that if a number of consecutive frames (with some error) have the correct number of frames, the points detected are the right points.
-	int numGood = 0;
-	//Find the mean of each point in a frame, then calculate the variance. If small, then we have our joints.
-	vector<Point> meanPts = vector<Point>(numPts);
-	vector<Point> varPts = vector<Point>(numPts);
-	vector<Frame> useFrames = vector<Frame>();
-	while (numGood < threshFrames){
-		if (dirty[index].pointList.size() == numPts){
-			dirty[index].Organize(LHSLessObj);
-			useFrames.push_back(dirty[index]);
-			for (int i = 0; i < numPts; ++i){
-				meanPts[i] += dirty[index].pointList[i];
-			}
-		}
-		++index;//At end of loop, point after last used will be index.
-	}
-	for (int i = 0; i < numPts; ++i){
-		meanPts[i] /= numPts;
-	}
-	//Calculate variance. See if the variance is much more than the width of the SC Logo (save the mean widths for each point)
-	//If the variance is bad, keep removing frames from the front and updating the mean/variance until the variance is small enough.
-	//Once good points are found, keep adding frames, adjusting them so the points are in order and only points relatively close are considered the same. 
-	//If points are lost for some period of time, rerun the code to find the points and flag the frame that there is a discontinuity since the last frame.
-}
-
-int FillAllPossilbe(vector<Frame>& dirty, vector<Frame>& ret, int index, const int threshFrames, const int numPts){
-}
-
 #pragma endregion
 
 int _tmain(int argc, char* argv[])
