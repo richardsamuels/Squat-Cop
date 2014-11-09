@@ -30,8 +30,10 @@ enum ShoulderError{
 	RIGHT_HIGHER,
 	SHOULDERS_GOOD
 };
-static const double FRACTION_GOOD = 0.9f;
+static const double FRACTION_GOOD = 0.9;
 static const double RADIUS_FUDGE = 1.05;
+static const double KNEE_THRESH = 0.1;
+static const double SHOULDER_THRESH = 0.1;
 #pragma endregion
 
 #pragma region Point and Frame classes

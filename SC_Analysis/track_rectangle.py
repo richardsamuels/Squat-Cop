@@ -47,6 +47,7 @@ feature_params = dict( maxCorners = 500,
 
 overlapFudge = 0.9
 framesAnalyzedBeforeStart = 10
+STDEV_FUDGE = 4
 
 class Joint:
     def __init__(self, circle):
@@ -61,43 +62,51 @@ class Joint:
         Updates joint.
         :param joint: Joint object to be updated.
         """
+        #Calculate mean and perpendicular vectors
         meanDispHat = (0,0)
         for point in self.pointList:
-            dispVector = np.subtract(point[0], point[-1])/(len(point)-1)
+            dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
             meanDispHat = np.add(meanDispHat, dispVector)
-        meanDispHat = meanDispHat / np.linalg.norm(meanDispHat.norm)
+        meanMag = np.linalg.norm(meanDispHat)
+        meanDispHat = meanDispHat / meanMag
         perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
 
         # Find stdev of perpendicular component magnitude
         stdev = 0
         for point in self.pointList:
-            dispVector = np.subtract(point[0], point[-1])/(len(point)-1)
+            dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
             stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
         stdev = math.sqrt(stdev / len(self.pointList))
         newJointPoints = []
 
-        #Remove points that have significant perpendicular components and going in the direction of the mean vector
-        # , and recalculate mean vector
-        meanDispHat = (0,0)
-        for point in self:
-            dispVector = np.subtract(point[0], point[-1])/(len(point)-1)
-            if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0: # if perpendicular component is small
-                newJointPoints.append(point)
-                meanDispHat = np.add(meanDispHat, dispVector)
-        meanDispHat = meanDispHat / np.linalg.norm(meanDispHat.norm)
-        perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
+        # Remove points if the stdev is large
+        if stdev > meanMag / STDEV_FUDGE:
+            #Remove points that have significant perpendicular components and going in the direction of the mean vector
+            # , and recalculate mean vector
+            newMDP = (0,0)
+            for point in self.pointList:
+                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0: # if perpendicular component is small
+                    newJointPoints.append(point)
+                    newMDP = np.add(newMDP, dispVector)
+            meanMag = np.linalg.norm(newMDP)
+            meanDispHat = newMDP / meanMag
+            perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
 
-        # Re-find stdev of perpendicular component magnitude
-        stdev = 0
-        for point in self:
-            dispVector = np.subtract(point[0], point[-1])/(len(point)-1)
-            stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
-        stdev = math.sqrt(stdev / len(self.pointList))
+            # Re-find stdev of perpendicular component magnitude
+            stdev = 0
+            for point in self.pointList:
+                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+                stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
+            stdev = math.sqrt(stdev / len(self.pointList))
 
-        #Update self
+        #Update all joint variables
         self.meanDispHat = meanDispHat
         self.meanDispPerpHat = perpHat
-        self.perpStdev = stdev
+        if stdev > meanMag / STDEV_FUDGE: # If the standard deviation is large-ish relative to the main displacement vector
+            self.perpStdev = stdev
+        else:
+            self.perpStdev = meanMag / STDEV_FUDGE
         self.pointList = newJointPoints
         self.circle[0] = np.add(self.circle[0], meanDispHat)
 
@@ -139,7 +148,6 @@ def UpdateTracks(tracks, img0, img1, track_len):
             new_tracks.append(tr)
         return new_tracks
 
-
 class App:
     def __init__(self, video_src, circles):
         self.track_len = 2
@@ -167,18 +175,19 @@ class App:
         for point in self.roguePoints:
             for joint in self.allJoints:
                 if InCircle(joint.circle,point[-1]):# Within the point radius
-                    dispVector = np.subtract(point[0], point[-1])/(len(point)-1)
+                    dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
                     if np.dot(dispVector, joint.meanDispHat) > 0:# Pointing in same direction
                         if np.dot(dispVector, joint.meanDispPerpHat)/joint.perpStdev < 2:# Less than 2 stdevs away
                             self.allJoints.append(point)# Now add point
-                            continue
+                            continue#Add point to only one joint
         self.roguePoints = []
 
     #return the first pair of joints that overlap, or zero if none exist
     def OverLappingJoints(self):
         for i in range(0,len(self.allJoints)):
             for j in range(0,i):
-                if np.dot(np.subtract(self.allJoints[i].circle[0], self.allJoints[j].circle[0])) < overlapFudge * max([self.allJoints[i].circle[1], self.allJoints[j].circle[1]]):
+                #overlapFudge decreases radius
+                if np.linag.norm(np.subtract(self.allJoints[i].circle[0], self.allJoints[j].circle[0])) < overlapFudge * max([self.allJoints[i].circle[1], self.allJoints[j].circle[1]]):
                     return [i, j]
         return 0
 
@@ -190,7 +199,7 @@ class App:
         """
         outString = str(self.frame_idx) + ","
         for joint in self.allJoints:
-            outString = outString + " " + str(joint.circle[0]) + ", "
+            outString = outString + str(joint.circle[0]) + ","
         outData.write(outString + "\n")
 
     def run(self, outData):
@@ -231,7 +240,7 @@ class App:
                     #Update all points in each segment
                     badJoints = []
                     for i in range(0,len(self.allJoints)):
-                        #Update each point and find the mean vector, perpendicular vector, and
+                        #Update each joint point and remove as necessary
                         self.allJoints[i].pointList = UpdateTracks(self.allJoints[i].pointList,img0,img1, self.track_len)
                         self.allJoints[i].Update()
                         if len(self.allJoints[i].pointList) == 0:
@@ -239,8 +248,7 @@ class App:
                     if len(badJoints) != 0:# If there are joints with no points.
                         return [self.frame_idx, badJoints] #return frame number and joint numbers
 
-                    #After finding the current average direction, see what other points are also in the joint and
-                    # pointing the "right" way
+                    #Add joints that are almost definitely in the joint
                     self.AddToJoints() # This makes roguePoints EMPTY!
 
                     #Return as error if there are significantly overlapping joints (This should never happen in a squat)
@@ -255,9 +263,23 @@ class App:
                     if p is not None:
                         for x, y in np.float32(p).reshape(-1, 2):
                             self.roguePoints.append([(x, y)])
+                #save old image and write to file
                 self.prev_gray = frame_gray
-                cv2.imshow('lk_track', vis)
+                self.WriteData(outData)
+                #cv2.imshow('lk_track', vis)
 
+def Test():
+    circle = [(10,10),1]
+    circle2 =  [(11,10),2]
+    circles = [circle, circle2]
+    point = (12,12)
+    joint = Joint(circle)
+    pointList = [[(10,10), (11,10)], [(10,10), (11,10)], [(10,10), (10,11)], [(10,10), (10,11)], [(10,10), (9,9)]]# Two points going in the same direction, two another direction, and one backwards
+    joint.pointList = pointList
+    joint.Update()
+    print joint.pointList
+    inCircleT = not InCircle(circle, point)
+    print inCircleT
 def main():
     import sys
     try: video_src = sys.argv[1]
@@ -271,4 +293,16 @@ def main():
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    main()
+    #main()
+    Test()
+    '''
+    Test:
+    Joint.Update
+    InCircle
+    UpdateTracks(ish)
+
+    AddToJoints
+    OverLappingJoints
+    WriteData
+    run
+    '''
