@@ -13,6 +13,12 @@
 
 using namespace std;
 
+//Remove up to start
+//Normalize frames
+//Find reps
+//Scale for each rep
+//Check each rep
+
 #pragma region Enums and constants
 enum VideoType
 {
@@ -34,6 +40,12 @@ static const double FRACTION_GOOD = 0.9;
 static const double RADIUS_FUDGE = 1.05;
 static const double KNEE_THRESH = 0.1;
 static const double SHOULDER_THRESH = 0.1;
+//Form X_Y_FUDGE
+//X->person is going in; Y-> direction going
+const double TOP_DOWN_FUDGE = 0.8;
+const double TOP_UP_FUDGE = 0.9;
+const double BOTTOM_UP_FUDGE = 1.3;
+const double BOTTOM_DOWN_FUDGE = 1.15;
 #pragma endregion
 
 #pragma region Point and Frame classes
@@ -202,8 +214,35 @@ public:
 
 #pragma endregion
 
-#pragma region General helper functions
+#pragma region General
 
+#pragma region Structs (currently only for front)
+
+struct SetupStruct{
+
+	double footDist;
+	double rLeft;
+	double rRight;
+	double lTheta;
+	double rTheta;
+	Point lFootVec;
+	Point leftKnee;
+	Point rightKnee;
+	Point rFootVec;
+	Point relRShoulder;
+	SetupStruct() : footDist(0), rLeft(0), rRight(0){}//Double check this
+};
+
+struct FormErrors{
+	double lthetaDiff;
+	bool lwobble;
+	double rthetaDiff;
+	bool rwobble;
+	ShoulderError shoulderBalance;
+};
+#pragma endregion
+
+#pragma region Helper Functions
 //Constructs two new basis vectors, where points from left-right foot, and the other points orthogonal to it, predominatly in the y direction.
 void NewBasis(const Point& left, const Point& right, Point& xhat, Point& yhat, const bool yhatNegate = false){
 	Point x = right - left;
@@ -227,78 +266,50 @@ vector<Frame> ReadFile(const string &filename){
 	return dirty;
 }
 
+//Normalizes a frame, requiring specification of origin, next point, and direction for orthogonal vector.
+void NormalizeFrame(Frame& frame, const int originInd, const int otherInd, const bool yhatNegate = false){
+	//Last point is leftfoot, second to last point is right (video's left/right)
+	double curDist = (frame[otherInd] - frame[originInd]).Norm();
+	Point origin = Point(frame[originInd]);
+	Point xhat = Point(), yhat = Point();
+	NewBasis(frame[originInd], frame[otherInd], xhat, yhat, yhatNegate);
+	for (size_t i = 0; i < frame.size(); ++i){
+		//Scale, then subtract origin, transform into new space.
+		Point newP = ((Point(frame[i])) - origin); newP.Transform(xhat, yhat);
+		frame[i] = newP;
+	}
+}
+
+//Remove all frames before startFrame
+void RemoveUpToStart(vector<Frame>& frames, const int startFrame){
+	int startFrameIndex = -1;
+	for (size_t i = 0; i < frames.size(); ++i){
+		if (frames[i].number == startFrame){
+			startFrameIndex = i;
+			break;
+		}
+	}
+	if (startFrameIndex == -1)
+		throw exception("Frame not found");
+	frames.erase(frames.begin(), frames.begin() + startFrameIndex + 1);
+}
+
+void ScaleFrames(vector<Frame>& frames, const float base, const int relIndR, const int relIndL){
+
+	for (int i = 0; i < frames.size(); ++i){
+		float scale = base / (frames[i][relIndR] - frames[i][relIndL]).Norm();
+		for (int j = 0; j < frames[i].size(); ++j){
+			frames[i][j] *= scale;
+		}
+	}
+}
+
 #pragma endregion
 
-#pragma region General structs (use inheritance to generalize later)
-struct SetupStruct{
-	//void Setup(const vector<Frame>& dirty, const int startFrame, const int numCalPts,
-	//	double& footDist, double& rLeft, double& rRight, Point& lFootVec, Point& rFootVec)
-	double footDist;
-	double rLeft;
-	double rRight;
-	Point lFootVec;
-	Point rFootVec;
-	Point relRShoulder;
-	SetupStruct() : footDist(0), rLeft(0), rRight(0){}//Double check this
-};
-
-struct FormErrors{
-	KneeError leftKnee;
-	KneeError rightKnee;
-	ShoulderError shoulderBalance;
-};
-#pragma endregion
-
-#pragma region Front analysis
-//Finds the directional vector of the foot.
-Point FootVector(const double dShoulder, const double dFeet, bool leftFoot){
-	double sinThetaFoot = (dFeet / (2 * dShoulder));
-	double cosThetaFoot = sqrt(1 - sinThetaFoot * sinThetaFoot);
-	int xSign = 1;
-	if (leftFoot)
-		xSign = -1;
-	return Point(xSign * sinThetaFoot, 0, -cosThetaFoot);
-}
-
-//Checks shoulder for tilt.
-ShoulderError CheckShoulder(const Frame& normalizedFrame, const SetupStruct& s, const double shoulderThresh){
-	Point relRCurrent = normalizedFrame[1] - normalizedFrame[0];//Right - left
-	double sinTheta = (relRCurrent.CrossProd(s.relRShoulder) / (relRCurrent.Norm() * s.relRShoulder.Norm())).z;
-	if (abs(sinTheta) > shoulderThresh){
-		if (sinTheta > 0)
-			return LEFT_HIGHER;
-		else
-			return RIGHT_HIGHER;
-	}
-	else
-		return SHOULDERS_GOOD;
-
-}
-
-//Check if knees follow the path that they're supposed to follow
-KneeError CheckKnee(Point calibratedKnee, const Point& plane, const double radius, const double kneeThresh){
-	double z2d = radius * radius - calibratedKnee.Dot(calibratedKnee);
-	if (z2d < 0)
-		throw exception("Impossibly long shin.");
-	calibratedKnee.z = sqrt(z2d);
-	double perpVal = calibratedKnee.Dot(plane) / radius;
-	//If the projection onto the perpendicular component (which points away from the body) is negative, the knees are pointing in. Otherwise, they're pointing out.
-	if (abs(perpVal) > kneeThresh)
-	{
-		if (perpVal < 0)
-			return CAVING_IN;
-		else
-			return POINTING_OUT;
-	}
-	else
-		return KNEE_GOOD;
-}
-#pragma endregion 
-
-#pragma region General execution methods
+#pragma region Execution methods
 
 //Sets up the necessary vectors for calculation in Loop
-SetupStruct Setup(const vector<Frame>& dirty, const int startFrame, const double numCalPts, const VideoType videoType){
+SetupStruct Setup(const vector<Frame>& frames, const int startIndex, const double numCalPts, const VideoType videoType){
 	//Initialize data for use
 	SetupStruct ret;
 	if (videoType == FRONT){
@@ -310,23 +321,14 @@ SetupStruct Setup(const vector<Frame>& dirty, const int startFrame, const double
 		Point rightFoot = Point();
 		Point leftShoulder = Point();
 		Point rightShoulder = Point();
-		int startFrameIndex = -1;
-		for (size_t i = 0; i < dirty.size(); ++i){
-			if (dirty[i].number == startFrame){
-				startFrameIndex = i;
-				break;
-			}
-		}
-		if (startFrameIndex == -1)
-			throw exception("Frame not found");
 		//Sum up points for some period of time to get an average
-		for (size_t i = startFrameIndex; i < dirty.size() && dirty[i].number < startFrame + numCalPts; ++i){
-			leftFoot += dirty[i][-2];
-			rightFoot += dirty[i][-1];
-			leftKnee += dirty[i][-4];
-			rightKnee += dirty[i][-3];
-			leftShoulder += dirty[i][0];
-			rightShoulder += dirty[i][1];
+		for (size_t i = startIndex; i < frames.size() && frames[i].number < frames[startIndex].number + numCalPts; ++i){
+			leftFoot += frames[i][-2];
+			rightFoot += frames[i][-1];
+			leftKnee += frames[i][-4];
+			rightKnee += frames[i][-3];
+			leftShoulder += frames[i][0];
+			rightShoulder += frames[i][1];
 		}
 		leftFoot /= numCalPts;
 		rightFoot /= numCalPts;
@@ -362,10 +364,16 @@ SetupStruct Setup(const vector<Frame>& dirty, const int startFrame, const double
 
 		//Find vector to take CrossProd with, take CrossProds, and return these. These vectors should point AWAY from the body.
 		Point shoulderMid = (leftShoulder + rightShoulder) / 2;//This helps to account for uneven feet/markers.
+
 		Point temp = (FootVector(dShoulder, 2 * abs((leftFoot - shoulderMid).x), true)); // * 2 to assume that the feet are evenly spaced, even if they aren't.
 		ret.lFootVec = leftKnee.CrossProd(temp).Normalize();//Pointing away from the body
+		ret.lTheta = atan(temp.x / temp.z);
+		ret.leftKnee = leftKnee;
+
 		temp = (FootVector(dShoulder, 2 * abs((rightFoot - shoulderMid).x), false));
 		ret.rFootVec = temp.CrossProd(rightKnee).Normalize();//Pointing away from the body
+		ret.rTheta = atan(temp.x / temp.z);
+		ret.rightKnee = rightKnee;
 
 		//Find relative right shoulder
 		ret.relRShoulder = rightShoulder - leftShoulder;
@@ -373,37 +381,217 @@ SetupStruct Setup(const vector<Frame>& dirty, const int startFrame, const double
 	return ret;
 }
 
-//Normalizes a frame, requiring specification of origin, next point, and direction for orthogonal vector.
-void NormalizeFrame(Frame& frame, const double footDist, const int originInd, const int otherInd, const bool yhatNegate = false){
-	//Last point is leftfoot, second to last point is right (video's left/right)
-	double curDist = (frame[otherInd]- frame[originInd]).Norm();
-	double scaleFactor = footDist / curDist;//If curdist < originalDist, the points recorded are too close, so make them further apart.
-	//Frame ret = Frame(frame);//Check this copy constructor works right.
-	Point origin = Point(frame[originInd]) * scaleFactor;
-	Point xhat = Point(), yhat = Point();
-	NewBasis(frame[originInd], frame[otherInd], xhat, yhat, yhatNegate);
-	for (size_t i = 0; i < frame.size(); ++i){
-		//Scale, then subtract origin, transform into new space.
-		Point newP = ((Point(frame[i]) *  scaleFactor) - origin); newP.Transform(xhat, yhat);
-		frame[i] = newP;
+//Find first time after current frame when person is likely at botom of squat
+int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFrames, const bool bottom, const int referencePoint){
+	//Person is erect, or mostly erect, at the beginning. Loop through until person is obviously not erect, then erect.
+	double initialHeight = abs(calibratedFrames[startFrame][0].y);//Arbitrarily choose one of the shoulders to follow
+	bool midSquat = false;
+	int indA = -1, indB = -1;
+	for (int i = startFrame; i < calibratedFrames.size(); ++i){
+		if (bottom){
+			if (abs(calibratedFrames[i][referencePoint].y) > initialHeight * BOTTOM_UP_FUDGE){
+				midSquat = true;
+				indA = i;
+			}
+			if (midSquat && abs(calibratedFrames[i][referencePoint].y) > initialHeight * BOTTOM_DOWN_FUDGE){
+				indB = i;
+				continue;
+			}
+		}
+		else{
+			if (abs(calibratedFrames[i][referencePoint].y) < initialHeight * TOP_DOWN_FUDGE){
+				midSquat = true;
+				indA = i;
+			}
+			if (midSquat && abs(calibratedFrames[i][referencePoint].y) < initialHeight * TOP_UP_FUDGE){
+				indB = i;
+				continue;
+			}
+		}
 	}
-}
-
-//Execute this function each cycle.
-FormErrors Loop(Frame& frame, const SetupStruct s, const double thresh, const VideoType videoType){
-	FormErrors ret;
-	if (videoType == FRONT){
-		//Frame now has left foot at (0, 0) and right foot at (footDist, 0)
-		NormalizeFrame(frame, s.footDist, -2, -1);
-		ret.leftKnee = CheckKnee(frame[-4], s.lFootVec, s.rLeft, thresh);
-		ret.rightKnee = CheckKnee(frame[-3] - frame[-1], s.rFootVec, s.rRight, thresh);
-		ret.shoulderBalance = CheckShoulder(frame, s, thresh);
+	if (indA != -1){
+		if (indB == -1)
+			throw exception("Video stopped mid squat, or person is dead.");
+		else{
+			//Find the minimum value
+			float minValue = INT_MAX;//Some large number
+			int minIndex = -1;
+			for (int i = indA; i < indB; ++i){
+				float temp = abs(calibratedFrames[i][0].y);
+				if (temp < minValue){
+					minValue = temp;
+					minIndex = i;
+				}
+			}
+			if (minIndex == -1)
+				throw exception("This shouldn't be executed.");
+			return minIndex;
+		}
 
 	}
-	return ret;
+	else{
+		if (indB == -1)
+			return -1;//Flag that the video has finished.
+		else
+			throw exception("This should never execute.");
+	}
 }
 
 #pragma endregion
+
+#pragma endregion
+/*
+To Test:
+NormalizeFrame
+RemoveUpToStart
+ScaleFrames
+
+Setup
+CriticalPointIndex
+
+ReadPythonOut
+CheckRep
+*/
+#pragma region Front 
+
+//Finds the directional vector of the foot.
+Point FootVector(const double dShoulder, const double dFeet, bool leftFoot){
+	double sinThetaFoot = (dFeet / (2 * dShoulder));
+	double cosThetaFoot = sqrt(1 - sinThetaFoot * sinThetaFoot);
+	int xSign = 1;
+	if (leftFoot)
+		xSign = -1;
+	return Point(xSign * sinThetaFoot, 0, -cosThetaFoot);
+}
+
+//Read output from python function that generates foot vectors
+double ReadPythonOut(const string& line, Point& point){
+	int afterComma = 0, nextComma = line.find(',');
+	double ret = stod(line.substr(0, nextComma));
+	afterComma = nextComma + 1;
+	nextComma = line.find(afterComma, ',');
+	point.x = stod(line.substr(afterComma, nextComma));
+	afterComma = nextComma + 1;
+	nextComma = line.find(afterComma, ',');
+	point.y = stod(line.substr(afterComma, nextComma));
+	afterComma = nextComma + 1;
+	nextComma = line.find(afterComma, ',');
+	point.z = stod(line.substr(afterComma, nextComma));
+}
+
+//Checks shoulder for tilt.
+ShoulderError CheckShoulder(const Frame& normalizedFrame, const SetupStruct& s, const double shoulderThresh){
+	Point relRCurrent = normalizedFrame[1] - normalizedFrame[0];//Right - left
+	double sinTheta = (relRCurrent.CrossProd(s.relRShoulder) / (relRCurrent.Norm() * s.relRShoulder.Norm())).z;
+	if (abs(sinTheta) > shoulderThresh){
+		if (sinTheta > 0)
+			return LEFT_HIGHER;
+		else
+			return RIGHT_HIGHER;
+	}
+	else
+		return SHOULDERS_GOOD;
+
+}
+
+//Given a start and end of a rep, calculate if at any point there was shoulder tilt and if the knees followed the correct pattern, as described by values in FormErrors
+FormErrors CheckRep(const int startInd, const int endInd, vector<Frame>& frames, const float shoulderThresh, const float r2Thresh, const int numCalPoints, const VideoType videoType){
+	FormErrors ret;
+	//Scale
+	SetupStruct setupStruct = Setup(frames, startInd, numCalPoints, videoType);
+	ScaleFrames(frames, setupStruct.footDist, -2, -1);
+	if (videoType == FRONT){
+		ret.shoulderBalance = SHOULDERS_GOOD;
+		ofstream ofs("temp.csv");
+		float lFootr2 = setupStruct.rLeft * setupStruct.rLeft;
+		float rFootr2 = setupStruct.rRight * setupStruct.rRight;
+		for (int i = startInd; i < endInd; ++i){
+			ShoulderError temp = CheckShoulder(frames[i], setupStruct, shoulderThresh);
+			if (temp != SHOULDERS_GOOD){
+				ret.shoulderBalance = temp;
+			}
+			//Left foot
+			Point lKnee = (frames[i][2] - frames[i][-2]);
+			double z2d = lFootr2 - lKnee.Dot(lKnee);
+			if (z2d < 0)
+				throw exception("Impossibly long shin.");
+			lKnee.z = -sqrt(z2d);//Z always negative?
+			//Right foot
+			Point rKnee = (frames[i][3] - frames[i][-1]);
+			double z2d = rFootr2 - rKnee.Dot(lKnee);
+			if (z2d < 0)
+				throw exception("Impossibly long shin.");
+			lKnee.z = -sqrt(z2d);//Z always negative?
+			ofs << lKnee.x << ", " << lKnee.y << ", " << lKnee.z << "|" << rKnee.x << ", " << rKnee.y << ", " << rKnee.z << endl;
+		}
+		ofs.close();
+		//Close file before writing to it again.
+		system("lsq.py");
+		ifstream ifs("temp.csv");
+		//Read fitted plane data and use it to construct and compare to theoretical normal vector
+		string input;
+		getline(ifs, input);
+		Point lPlane;
+		ret.lwobble = ReadPythonOut(input, lPlane) > r2Thresh;//R squared
+		lPlane = lPlane.CrossProd(setupStruct.leftKnee);
+		getline(ifs, input);
+		Point rPlane;
+		ret.rwobble = ReadPythonOut(input, rPlane) > r2Thresh;//R squared
+		rPlane = rPlane.CrossProd(setupStruct.rightKnee);
+		//Take absolute value to force angles to be in correct quadrant.
+		ret.lthetaDiff = setupStruct.lTheta- atan(abs(lPlane.x / lPlane.z));
+		ret.rthetaDiff = setupStruct.rTheta - atan(abs(rPlane.x / rPlane.z));
+	}
+}
+
+//Check if knees follow the path that they're supposed to follow
+//DONT USE THIS!!
+KneeError CheckKnee(Point calibratedKnee, const Point& plane, const double radius, const double kneeThresh){
+	throw exception("Don't run this code!");
+	double z2d = radius * radius - calibratedKnee.Dot(calibratedKnee);
+	if (z2d < 0)
+		throw exception("Impossibly long shin.");
+	calibratedKnee.z = -sqrt(z2d);
+	double perpVal = calibratedKnee.Dot(plane) / radius;
+	//If the projection onto the perpendicular component (which points away from the body) is negative, the knees are pointing in. Otherwise, they're pointing out.
+	if (abs(perpVal) > kneeThresh)
+	{
+		if (perpVal < 0)
+			return CAVING_IN;
+		else
+			return POINTING_OUT;
+	}
+	else
+		return KNEE_GOOD;
+}
+
+//Given a vector of frames that start at the proper time, find all the reps and determine if they are good or not, returning a formerrors struct for each rep
+vector<FormErrors> FrontAnalysis(vector<Frame>& frames, const float shoulderThresh){
+	vector<FormErrors> formErrors;
+	//Normalize frames
+	for (int i = 0; i < frames.size(); ++i){
+		NormalizeFrame(frames[i], -2, -1);
+	}
+	//Find all maxima and minima
+	vector<int> maxima;
+	vector<int> minima;
+	int startFrame = 0;
+	int next = 0;
+	bool bottom = false;
+	while ((next = CriticalPointIndex(startFrame, frames, bottom, 0)) != -1){
+		if (bottom)//Start at bottom of squat
+			maxima.push_back(next);
+		else
+			minima.push_back(next);
+		//Run calculations for every rep.
+		if (!bottom && minima.size() > 0){
+			formErrors.push_back(CheckRep(maxima[maxima.size() - 2], maxima[maxima.size() - 1], frames));
+		}
+		bottom = !bottom;
+	}
+	return formErrors;
+}
+#pragma endregion 
 
 #pragma region Test Code
 void TestPoint(){
@@ -476,7 +664,7 @@ void TestFront(){
 	string testString = "0,(0, 2),(1, 1),(2, 2)";
 	double footDist = 2;
 	Frame testFrame(testString);
-	NormalizeFrame(testFrame, footDist, -2, -1);
+	NormalizeFrame(testFrame, -2, -1);
 	testFrame[-2].Round(); testFrame[-1].Round();
 	bool normalizeFrameTest = testFrame[-2] == Point(0, 0) && testFrame[-1] == Point(footDist, 0);
 	cout << "\tNormalizeFrame: " << normalizeFrameTest << endl;
