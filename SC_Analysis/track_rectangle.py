@@ -1,26 +1,6 @@
 #!/usr/bin/env python
 
 '''
-Lucas-Kanade tracker
-====================
-
-Lucas-Kanade sparse optical flow demo. Uses goodFeaturesToTrack
-for track initialization and back-tracking for match verification
-between frames.
-
-Usage
------
-lk_track.py [<video_source>]
-
-
-Keys
-----
-ESC - exit
-'''
-
-
-
-'''
 TODO:
 1) See if KEEPING  points that are not initially in a joint improves performance
 2) See if its necessary to actually remove points that are not moving in the mean direction
@@ -35,80 +15,21 @@ import video
 import math
 from common import anorm2, draw_str
 from time import clock
+'''
+PARAMETERS/GLOBAL CONSTANTS (GALLAGHER FORGIVE MY SINS)
+'''
+lk_params = dict( winSize = (15, 15), maxLevel = 2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
-lk_params = dict( winSize  = (15, 15),
-                  maxLevel = 2,
-                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+feature_params = dict( maxCorners = 500, qualityLevel = 0.3, minDistance = 7, blockSize = 7 )
 
-feature_params = dict( maxCorners = 500,
-                       qualityLevel = 0.3,
-                       minDistance = 7,
-                       blockSize = 7 )
-
-overlapFudge = 0.9
-framesAnalyzedBeforeStart = 10
+OVERLAP_FUDGE = 0.9
+FRAMES_ANAL_BEFORE_START = 10
 STDEV_FUDGE = 4
-
-class Joint:
-    def __init__(self, circle):
-        self.circle = circle
-        self.pointList = []
-        self.meanDispHat = (1,0)
-        self.meanDispPerpHat = (0,1)
-        self.perpStdev = 0
-
-    def Update(self):
-        """
-        Updates joint.
-        :param joint: Joint object to be updated.
-        """
-        #Calculate mean and perpendicular vectors
-        meanDispHat = (0,0)
-        for point in self.pointList:
-            dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-            meanDispHat = np.add(meanDispHat, dispVector)
-        meanMag = np.linalg.norm(meanDispHat)
-        meanDispHat = meanDispHat / meanMag
-        perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
-
-        # Find stdev of perpendicular component magnitude
-        stdev = 0
-        for point in self.pointList:
-            dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-            stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
-        stdev = math.sqrt(stdev / len(self.pointList))
-        newJointPoints = []
-
-        # Remove points if the stdev is large
-        if stdev > meanMag / STDEV_FUDGE:
-            #Remove points that have significant perpendicular components and going in the direction of the mean vector
-            # , and recalculate mean vector
-            newMDP = (0,0)
-            for point in self.pointList:
-                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0: # if perpendicular component is small
-                    newJointPoints.append(point)
-                    newMDP = np.add(newMDP, dispVector)
-            meanMag = np.linalg.norm(newMDP)
-            meanDispHat = newMDP / meanMag
-            perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
-
-            # Re-find stdev of perpendicular component magnitude
-            stdev = 0
-            for point in self.pointList:
-                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-                stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
-            stdev = math.sqrt(stdev / len(self.pointList))
-
-        #Update all joint variables
-        self.meanDispHat = meanDispHat
-        self.meanDispPerpHat = perpHat
-        if stdev > meanMag / STDEV_FUDGE: # If the standard deviation is large-ish relative to the main displacement vector
-            self.perpStdev = stdev
-        else:
-            self.perpStdev = meanMag / STDEV_FUDGE
-        self.pointList = newJointPoints
-        self.circle[0] = np.add(self.circle[0], meanDispHat)
+MAX_JOINT_POINTS = 5
+#circleMatrix-i-corresponds to left point,
+'''
+HELPER METHODS
+'''
 
 def InCircle(circle, point):
     """
@@ -118,6 +39,95 @@ def InCircle(circle, point):
     :return: true or false if in circle or not
     """
     return np.linalg.norm(np.subtract(circle[0], point)) <= circle[1] * circle[1]
+
+def CalceMeanVec(pointList):
+    meanDispHat = (0,0)
+    for point in pointList:
+        dispVector = np.divide(np.subtract(point[-1], point[0]),(len(point)-1))
+        meanDispHat = np.add(meanDispHat, dispVector)
+    meanMag = np.linalg.norm(meanDispHat)
+    meanDispHat = meanDispHat / meanMag
+    perpHat = [-meanDispHat[1], meanDispHat[0]]# orthogonal vector
+    return (meanDispHat, meanMag, perpHat)
+
+def CalcStdev(pointList, perpHat):
+    """
+
+    :param pointList:
+    :param perpHat:
+    :return:
+    """
+    stdev = 0
+    for point in pointList:
+        dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+        stdev = stdev + math.pow(np.dot(perpHat, dispVector),2)# The mean perpendicular component is 0 by definition
+    stdev = math.sqrt(stdev / len(pointList))
+    return stdev
+
+def RelativePoint(pointL, pointR, point):
+    pointVecHat = np.subtract(pointR,pointL)
+    pointMag = np.linalg.norm(pointVecHat)
+    pointVecHat = np.divide(pointVecHat, pointMag)
+    perpVecHat = (-pointVecHat[0], pointVecHat[1])
+
+    relativeCenter = np.subtract(pointL, point) #Check this
+
+    centerx = (np.dot(pointVecHat, relativeCenter) + pointL[0])
+    centery = (np.dot(perpVecHat, relativeCenter) + pointL[1])
+    return ((centerx, centery), pointMag)
+
+def InverseRelativePoint(pointL, pointR, localCenter, originalMag):
+    pointVecHat = np.subtract(pointR,pointL)
+    pointMag = np.linalg.norm(pointVecHat)
+    pointVecHat = np.divide(pointVecHat, pointMag)
+    perpVecHat = (-pointVecHat[0], pointVecHat[1])
+
+    localCenter = np.multiply(localCenter, pointMag/originalMag)
+    xval = np.dot(localCenter, pointVecHat) * pointVecHat[0] +np.dot(localCenter, perpVecHat) * perpVecHat[0]
+    yval = np.dot(localCenter, pointVecHat) * pointVecHat[1] +np.dot(localCenter, perpVecHat) * perpVecHat[1]
+    return np.add(pointL, (xval, yval))
+
+def Calibrate(indicies, retCenter, pointlist, centerMatrix):
+    for pair in indicies:
+        centerMatrix[pair[0]][pair[1]] = RelativePoint(pointlist[pair[1]][-1], pointlist[pair[0]][-1], retCenter)
+
+def CalcCenterMeanStdev(pointList, centerMatrix):
+        """
+
+        :param pointList:
+        :param centerMatrix:
+        :return:
+        """
+        retCenter = (0,0)
+        centers = []
+        centerInds = []
+        retStdev = 0
+        # Calculate mean center
+        for i in range(0, len(pointList)):
+            pointR = pointList[i][-1]
+            for j in range(0,i):
+                pointL = pointList[j][-1]
+                center = InverseRelativePoint(pointL, pointR, centerMatrix[i][j][0], centerMatrix[i][j][1])
+                retCenter = np.add(retCenter, center)
+                centers.append(center)
+                centerInds.append((i,j))
+
+        # Average RMS deviaiton from center
+        for center in centers:
+            retStdev = retStdev + np.linalg.norm(np.subtract(retCenter, center))
+        retStdev = retStdev / math.sqrt(len(centers))
+        #If a point is past 2 stdevs, remove point and recalibrate.
+        oldRetCenter = retCenter
+        indicies = []
+        for i in range(0,len(centers)):
+            if np.linalg.norm(np.subtract(centers[i] - oldRetCenter)) < 2 * max(retStdev, 1):
+                retCenter = np.subtract(retCenter, centers[i])
+                indicies.append(i)
+                print 'x'
+        retCenter = np.divide(retCenter, len(centers-len(indicies)))
+        for i in range(0,len(indicies)):
+            Calibrate(centerInds[indicies], retCenter, pointList, centerMatrix)
+        return (retCenter, retStdev)
 
 def UpdateTracks(tracks, img0, img1, track_len):
     """
@@ -148,16 +158,109 @@ def UpdateTracks(tracks, img0, img1, track_len):
             new_tracks.append(tr)
         return new_tracks
 
+def Initialize(circles, roguePoints):
+    allJoints = []
+    centerMatrix = []
+    # Create Joints
+    for circle in circles:
+        allJoints.append(Joint(circle))
+    # Add points to joints
+    for pointR in roguePoints:
+        added = False
+        for joint in allJoints:
+            #Get most recent point
+            if InCircle(joint.circle, pointR[-1]):
+                if added: # If a point is in two joints
+                    raise Exception("Overlapping joints upon initialization.")
+                matCol = []
+                for pointL in joint.pointList:
+                    # Find center in local coordinate system
+                    matCol.append(RelativePoint(pointL, pointR, joint.circle[0]))
+                joint.pointList.append(pointR)
+                centerMatrix.append(matCol)
+    # Throw out points that are not in joints
+    roguePoints[:] = []#Not sure if this works
+    return (allJoints, centerMatrix)
+
+'''
+CLASSES
+'''
+
+class Joint:
+    def __init__(self, circle):
+        self.circle = circle
+        self.pointList = []
+        self.meanDispHat = (1,0)
+        self.meanDispPerpHat = (0,1)
+        self.perpStdev = 0
+
+    def Update(self):
+        """
+        Updates joint.
+        :param joint: Joint object to be updated.
+        """
+
+        #Calculate mean and perpendicular vectors
+        meanDispHat, meanMag, perpHat = CalceMeanVec(self.pointList)
+
+        # Find stdev of perpendicular component magnitude
+        stdev = CalcStdev(self.pointList, perpHat)
+
+        # Remove points if the stdev is large
+        if stdev > meanMag / STDEV_FUDGE:
+            '''
+            newJointPoints = []
+            #Remove points that are not going generally in the same direction as all the others
+            for point in self.pointList:
+                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0:
+                    newJointPoints.append(point)
+
+            # Update mean and stdev again
+            meanDispHat, meanMag, perpHat = CalceMeanVec(newJointPoints)
+            stdev = CalcStdev(newJointPoints, perpHat)
+            # Update the pointlist
+            self.pointList = newJointPoints
+            '''
+            newPoints = []
+            newMatrix = []
+            for i in range (0,len(self.pointList)):
+                point = self.pointList[i]
+                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+                # If the point is good, save the point and its associated matrix column
+                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0:
+                    newPoints.append(point)
+                    newMatrix.append(self.centerMatrix[i])
+                # If the point is bad, delete the corresponding entry in all subsequent columns and add nothing
+                else:
+                    for j in range(i+1, len(self.pointList)):
+                        del self.centerMatrix[j][i]
+            self.pointList = newPoints
+            self.centerMatrix = newMatrix
+
+
+        #Update all joint variables
+        self.meanDispHat = meanDispHat
+        self.meanDispPerpHat = perpHat
+        if stdev > meanMag / STDEV_FUDGE: # If the standard deviation is large-ish relative to the main displacement vector
+            self.perpStdev = stdev
+        else:
+            self.perpStdev = meanMag / STDEV_FUDGE
+        self.circle[0], ignore = CalcCenterMeanStdev(self.pointList, self.centerMatrix)
+        #self.circle[0] = np.add(self.circle[0], meanDispHat)
+
 class App:
     def __init__(self, video_src, circles):
         self.track_len = 2
         self.detect_interval = 5
         self.roguePoints = []
+        self.centerMatrix = []
         self.cam = video.create_capture(video_src)
         self.frame_idx = -1#This is because the frame index updates BEFORE anything is done.
 
         #Save frame to start at and the initial circles.
         self.allJoints = []
+        self.centerMatrix = []
         self.circles = []
         self.pointsInCircles = []
         f = open(circles, 'r')
@@ -167,7 +270,6 @@ class App:
             self.circles.append( [(temp[0], temp[1]) , temp[2]] )# circle in form [(x,y),r]
         f.close()
 
-    #Add points that satisfy the condition of pointing in the direction of the mean vector of the joint, and having a minimal perpendicular component
     def AddToJoints(self):
         """
         Add points to joint that are within the radius of the joint circle and are "mostly" pointing in the direction the joint is going
@@ -182,12 +284,11 @@ class App:
                             continue#Add point to only one joint
         self.roguePoints = []
 
-    #return the first pair of joints that overlap, or zero if none exist
     def OverLappingJoints(self):
         for i in range(0,len(self.allJoints)):
             for j in range(0,i):
-                #overlapFudge decreases radius
-                if np.linag.norm(np.subtract(self.allJoints[i].circle[0], self.allJoints[j].circle[0])) < overlapFudge * max([self.allJoints[i].circle[1], self.allJoints[j].circle[1]]):
+                #OVERLAP_FUDGE decreases radius
+                if np.linag.norm(np.subtract(self.allJoints[i].circle[0], self.allJoints[j].circle[0])) < OVERLAP_FUDGE * max([self.allJoints[i].circle[1], self.allJoints[j].circle[1]]):
                     return [i, j]
         return 0
 
@@ -211,7 +312,7 @@ class App:
                 return 0
             self.frame_idx += 1
             #Only start doing calculations after the proper frame is reached
-            if self.frame_idx >= self.initalFrame - framesAnalyzedBeforeStart:
+            if self.frame_idx >= self.initalFrame - FRAMES_ANAL_BEFORE_START:
 
                 #Update current known rogue points
                 frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -223,19 +324,7 @@ class App:
                 #Joint handling
                 if self.frame_idx == self.initalFrame:
                     # Add initial good points to circles, "removing" from roguePoints
-                    # Create Joints
-                    for circle in self.circles:
-                        self.allJoints.append(Joint(circle))
-                    # Add points to joints
-                    for onePoint in self.roguePoints:
-                        added = False
-                        for joint in self.allJoints:
-                            #Get most recent point
-                            if InCircle(joint.circle, onePoint[-1]):
-                                if added: # If a point is in two joints
-                                    raise Exception("Overlapping joints upon initialization.")
-                                joint.pointList.append(onePoint[-1])
-                    self.roguePoints = []# Throw out points that are not in joints
+                    self.allJoints, self.centerMatrix = Initialize(self.circles,self.roguePoints)
                 else:
                     #Update all points in each segment
                     badJoints = []
@@ -266,20 +355,51 @@ class App:
                 #save old image and write to file
                 self.prev_gray = frame_gray
                 self.WriteData(outData)
-                #cv2.imshow('lk_track', vis)
+
+'''
+TESTING AND MAIN FUNCTION
+'''
 
 def Test():
     circle = [(10,10),1]
-    circle2 =  [(11,10),2]
-    circles = [circle, circle2]
+
     point = (12,12)
+    #Testing Joint.Update and Joint()
     joint = Joint(circle)
     pointList = [[(10,10), (11,10)], [(10,10), (11,10)], [(10,10), (10,11)], [(10,10), (10,11)], [(10,10), (9,9)]]# Two points going in the same direction, two another direction, and one backwards
     joint.pointList = pointList
     joint.Update()
     print joint.pointList
+    #Testing InCircle
     inCircleT = not InCircle(circle, point)
     print inCircleT
+    #Testing CalcMeanVector
+    pointList = [[point, np.add(point,1)], [point, np.add(point,-1)]]
+    meanVec, meanMag, meanPerp = CalceMeanVec(pointList)
+    print meanVec
+    #Testing CalcStdev
+    stdev = CalcStdev(pointList, meanPerp)
+    print stdev
+    #Testing relativepoint and inverserelativepoint
+    pointLi = (2,0)
+    pointRi = (4,1)
+    center = (2,2)
+    relcent, relmag = RelativePoint(pointLi,pointRi, center)
+    print relcent, relmag
+    pointLf = (1,1)
+    pointRf = (0,2)
+    center = (2,2)
+    invrelcent = InverseRelativePoint(pointLf, pointRf, center, relmag)
+    print invrelcent
+    #Testing CalcCenterMeanStdev and initialize
+    circle2 =  [(11,10),2]
+    circles = [circle, circle2]
+    roguePoints = [(0,0), (1,1), (-1,-1), (-1,1), (1,-1)]
+    allJoints, centerMatrix = Initialize(circles, roguePoints)
+    print len(centerMatrix), len(centerMatrix[0]), len(centerMatrix[-1])
+    centeravg, centerstd = CalcCenterMeanStdev(roguePoints, centerMatrix)
+    print centeravg, centerstd
+
 def main():
     import sys
     try: video_src = sys.argv[1]

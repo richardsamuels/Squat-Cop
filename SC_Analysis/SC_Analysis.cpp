@@ -274,7 +274,7 @@ void NormalizeFrame(Frame& frame, const int originInd, const int otherInd, const
 	Point xhat = Point(), yhat = Point();
 	NewBasis(frame[originInd], frame[otherInd], xhat, yhat, yhatNegate);
 	for (size_t i = 0; i < frame.size(); ++i){
-		//Scale, then subtract origin, transform into new space.
+		//Subtract origin and transform into new space.
 		Point newP = ((Point(frame[i])) - origin); newP.Transform(xhat, yhat);
 		frame[i] = newP;
 	}
@@ -440,6 +440,7 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 #pragma endregion
 
 #pragma endregion
+
 /*
 To Test:
 NormalizeFrame
@@ -452,6 +453,7 @@ CriticalPointIndex
 ReadPythonOut
 CheckRep
 */
+
 #pragma region Front 
 
 //Finds the directional vector of the foot.
@@ -522,10 +524,10 @@ FormErrors CheckRep(const int startInd, const int endInd, vector<Frame>& frames,
 			if (z2d < 0)
 				throw exception("Impossibly long shin.");
 			lKnee.z = -sqrt(z2d);//Z always negative?
-			ofs << lKnee.x << ", " << lKnee.y << ", " << lKnee.z << "|" << rKnee.x << ", " << rKnee.y << ", " << rKnee.z << endl;
+			ofs << lKnee.x << ", " << lKnee.y << ", " << lKnee.z << "," << rKnee.x << ", " << rKnee.y << ", " << rKnee.z << endl;
 		}
-		ofs.close();
 		//Close file before writing to it again.
+		ofs.close();
 		system("lsq.py");
 		ifstream ifs("temp.csv");
 		//Read fitted plane data and use it to construct and compare to theoretical normal vector
@@ -566,12 +568,12 @@ KneeError CheckKnee(Point calibratedKnee, const Point& plane, const double radiu
 }
 
 //Given a vector of frames that start at the proper time, find all the reps and determine if they are good or not, returning a formerrors struct for each rep
-vector<FormErrors> FrontAnalysis(vector<Frame>& frames, const float shoulderThresh){
+vector<FormErrors> FrontAnalysis(vector<Frame>& frames, const double shoulderThresh, const double  r2Thresh, const int numCalPoints){
 	vector<FormErrors> formErrors;
 	//Normalize frames
 	for (int i = 0; i < frames.size(); ++i){
 		NormalizeFrame(frames[i], -2, -1);
-	}
+	}//SCALE FRAMES
 	//Find all maxima and minima
 	vector<int> maxima;
 	vector<int> minima;
@@ -585,7 +587,7 @@ vector<FormErrors> FrontAnalysis(vector<Frame>& frames, const float shoulderThre
 			minima.push_back(next);
 		//Run calculations for every rep.
 		if (!bottom && minima.size() > 0){
-			formErrors.push_back(CheckRep(maxima[maxima.size() - 2], maxima[maxima.size() - 1], frames));
+			formErrors.push_back(CheckRep(maxima[maxima.size() - 2], maxima[maxima.size() - 1], frames, shoulderThresh, r2Thresh, numCalPoints, FRONT));
 		}
 		bottom = !bottom;
 	}
