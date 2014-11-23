@@ -1,23 +1,25 @@
 #!/usr/bin/env python
 
-'''
-TODO:
+''' TODO:
 1) See if KEEPING  points that are not initially in a joint improves performance
 2) See if its necessary to actually remove points that are not moving in the mean direction
 3) Try treating the center of the joint as the center of considered points (plus constants for new points
 4) See if increasing trackLen yields greater performance (due to the fact that the current implementation for
     displacment is smoothed. See Joint.Update and App.AddToJoint. This would also require keeping points that are
     in joints, but don't have enough data to well determine if they are going in the "same" direction.
+
+Note: centerMatrix i > j and i corresponds to left point
 '''
+
+
+# region Parameters and Imports
 import numpy as np
 import cv2
 import video
 import math
 from common import anorm2, draw_str
 from time import clock
-'''
-PARAMETERS/GLOBAL CONSTANTS (GALLAGHER FORGIVE MY SINS)
-'''
+
 lk_params = dict( winSize = (15, 15), maxLevel = 2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
 feature_params = dict( maxCorners = 500, qualityLevel = 0.3, minDistance = 7, blockSize = 7 )
@@ -26,11 +28,9 @@ OVERLAP_FUDGE = 0.9
 FRAMES_ANAL_BEFORE_START = 10
 STDEV_FUDGE = 4
 MAX_JOINT_POINTS = 5
-#circleMatrix-i-corresponds to left point,
-'''
-HELPER METHODS
-'''
+# endregion
 
+# region Helper Methods
 def InCircle(circle, point):
     """
     Returns true if the point is within the radius of the circle
@@ -127,7 +127,7 @@ def CalcCenterMeanStdev(pointList, centerMatrix):
         retCenter = np.divide(retCenter, len(centers-len(indicies)))
         for i in range(0,len(indicies)):
             Calibrate(centerInds[indicies], retCenter, pointList, centerMatrix)
-        return (retCenter, retStdev)
+        return retCenter
 
 def UpdateTracks(tracks, img0, img1, track_len):
     """
@@ -160,7 +160,6 @@ def UpdateTracks(tracks, img0, img1, track_len):
 
 def Initialize(circles, roguePoints):
     allJoints = []
-    centerMatrix = []
     # Create Joints
     for circle in circles:
         allJoints.append(Joint(circle))
@@ -177,20 +176,53 @@ def Initialize(circles, roguePoints):
                     # Find center in local coordinate system
                     matCol.append(RelativePoint(pointL, pointR, joint.circle[0]))
                 joint.pointList.append(pointR)
-                centerMatrix.append(matCol)
+                joint.centerMatrix.append(matCol)
     # Throw out points that are not in joints
     roguePoints[:] = []#Not sure if this works
-    return (allJoints, centerMatrix)
+    return allJoints
 
-'''
-CLASSES
-'''
+def AddToJoints(roguePoints, allJoints):
+    """
+    Add points to joint that are within the radius of the joint circle and are "mostly" pointing in the direction the joint is going
+    """
+    for point in roguePoints:
+        for joint in allJoints:
+            if InCircle(joint.circle,point[-1]):# Within the point radius
+                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
+                if np.dot(dispVector, joint.meanDispHat) > 0:# Pointing in same direction
+                    if np.dot(dispVector, joint.meanDispPerpHat)/joint.perpStdev < 2:# Less than 2 stdevs away
+                        allJoints.append(point)# Now add point
+                        continue#Add point to only one joint
+    roguePoints[:] = []
 
+def WriteData(frame_idx, allJoints, outData):
+
+    """
+    Writes out the joint locations and frame number, in the form frame#, (x, y), (x2,y2)...(xn,yn),
+    :param outData: File for writing to
+    """
+    outString = str(frame_idx) + ","
+    for joint in allJoints:
+        outString = outString + str(joint.circle[0]) + ","
+    outData.write(outString + "\n")
+
+def OverLappingJoints(allJoints):
+    for i in range(0,len(allJoints)):
+        for j in range(0,i):
+            #OVERLAP_FUDGE decreases radius
+            if np.linag.norm(np.subtract(allJoints[i].circle[0], allJoints[j].circle[0])) < OVERLAP_FUDGE * max([allJoints[i].circle[1], allJoints[j].circle[1]]):
+                return [i, j]
+    return 0
+# endregion
+
+# region Classes
 class Joint:
     def __init__(self, circle):
         self.circle = circle
         self.pointList = []
+        self.centerMatrix = []
         self.meanDispHat = (1,0)
+        self.meanMag = -1
         self.meanDispPerpHat = (0,1)
         self.perpStdev = 0
 
@@ -201,52 +233,11 @@ class Joint:
         """
 
         #Calculate mean and perpendicular vectors
-        meanDispHat, meanMag, perpHat = CalceMeanVec(self.pointList)
+        self.meanDispHat, self.meanMag, self.perpHat = CalceMeanVec(self.pointList)
 
         # Find stdev of perpendicular component magnitude
-        stdev = CalcStdev(self.pointList, perpHat)
-
-        # Remove points if the stdev is large
-        if stdev > meanMag / STDEV_FUDGE:
-            '''
-            newJointPoints = []
-            #Remove points that are not going generally in the same direction as all the others
-            for point in self.pointList:
-                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0:
-                    newJointPoints.append(point)
-
-            # Update mean and stdev again
-            meanDispHat, meanMag, perpHat = CalceMeanVec(newJointPoints)
-            stdev = CalcStdev(newJointPoints, perpHat)
-            # Update the pointlist
-            self.pointList = newJointPoints
-            '''
-            newPoints = []
-            newMatrix = []
-            for i in range (0,len(self.pointList)):
-                point = self.pointList[i]
-                dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-                # If the point is good, save the point and its associated matrix column
-                if abs(np.dot(dispVector, perpHat)/stdev) < 2 and np.dot(dispVector, meanDispHat) > 0:
-                    newPoints.append(point)
-                    newMatrix.append(self.centerMatrix[i])
-                # If the point is bad, delete the corresponding entry in all subsequent columns and add nothing
-                else:
-                    for j in range(i+1, len(self.pointList)):
-                        del self.centerMatrix[j][i]
-            self.pointList = newPoints
-            self.centerMatrix = newMatrix
-
-
-        #Update all joint variables
-        self.meanDispHat = meanDispHat
-        self.meanDispPerpHat = perpHat
-        if stdev > meanMag / STDEV_FUDGE: # If the standard deviation is large-ish relative to the main displacement vector
-            self.perpStdev = stdev
-        else:
-            self.perpStdev = meanMag / STDEV_FUDGE
-        self.circle[0], ignore = CalcCenterMeanStdev(self.pointList, self.centerMatrix)
+        self.perpStdev = CalcStdev(self.pointList, self.perpHat)
+        self.circle[0] = CalcCenterMeanStdev(self.pointList, self.centerMatrix)
         #self.circle[0] = np.add(self.circle[0], meanDispHat)
 
 class App:
@@ -254,13 +245,11 @@ class App:
         self.track_len = 2
         self.detect_interval = 5
         self.roguePoints = []
-        self.centerMatrix = []
         self.cam = video.create_capture(video_src)
         self.frame_idx = -1#This is because the frame index updates BEFORE anything is done.
 
         #Save frame to start at and the initial circles.
         self.allJoints = []
-        self.centerMatrix = []
         self.circles = []
         self.pointsInCircles = []
         f = open(circles, 'r')
@@ -270,38 +259,7 @@ class App:
             self.circles.append( [(temp[0], temp[1]) , temp[2]] )# circle in form [(x,y),r]
         f.close()
 
-    def AddToJoints(self):
-        """
-        Add points to joint that are within the radius of the joint circle and are "mostly" pointing in the direction the joint is going
-        """
-        for point in self.roguePoints:
-            for joint in self.allJoints:
-                if InCircle(joint.circle,point[-1]):# Within the point radius
-                    dispVector = np.subtract(point[-1], point[0])/(len(point)-1)
-                    if np.dot(dispVector, joint.meanDispHat) > 0:# Pointing in same direction
-                        if np.dot(dispVector, joint.meanDispPerpHat)/joint.perpStdev < 2:# Less than 2 stdevs away
-                            self.allJoints.append(point)# Now add point
-                            continue#Add point to only one joint
-        self.roguePoints = []
 
-    def OverLappingJoints(self):
-        for i in range(0,len(self.allJoints)):
-            for j in range(0,i):
-                #OVERLAP_FUDGE decreases radius
-                if np.linag.norm(np.subtract(self.allJoints[i].circle[0], self.allJoints[j].circle[0])) < OVERLAP_FUDGE * max([self.allJoints[i].circle[1], self.allJoints[j].circle[1]]):
-                    return [i, j]
-        return 0
-
-    def WriteData(self, outData):
-
-        """
-        Writes out the joint locations and frame number, in the form frame#, (x, y), (x2,y2)...(xn,yn),
-        :param outData: File for writing to
-        """
-        outString = str(self.frame_idx) + ","
-        for joint in self.allJoints:
-            outString = outString + str(joint.circle[0]) + ","
-        outData.write(outString + "\n")
 
     def run(self, outData):
         while True:
@@ -324,7 +282,7 @@ class App:
                 #Joint handling
                 if self.frame_idx == self.initalFrame:
                     # Add initial good points to circles, "removing" from roguePoints
-                    self.allJoints, self.centerMatrix = Initialize(self.circles,self.roguePoints)
+                    self.allJoints = Initialize(self.circles,self.roguePoints)
                 else:
                     #Update all points in each segment
                     badJoints = []
@@ -338,10 +296,10 @@ class App:
                         return [self.frame_idx, badJoints] #return frame number and joint numbers
 
                     #Add joints that are almost definitely in the joint
-                    self.AddToJoints() # This makes roguePoints EMPTY!
+                    self.AddToJoints(self.roguePoints, self.allJoints) # This makes roguePoints EMPTY!
 
                     #Return as error if there are significantly overlapping joints (This should never happen in a squat)
-                    overLapping = self.OverLappingJoints()
+                    overLapping = OverLappingJoints(self.allJoints)
                     if overLapping != 0:
                         return [self.frame_idx, overLapping]# return frame number and joint numbers
 
@@ -355,50 +313,59 @@ class App:
                 #save old image and write to file
                 self.prev_gray = frame_gray
                 self.WriteData(outData)
+# endregion
 
-'''
-TESTING AND MAIN FUNCTION
-'''
-
+# region Testing
+def InCircleT():
+    circle = [(1,1),1]
+    point = (1.5,1)
+    return "InCircleT Passed: " + str(InCircle(circle,point))
+def RelativePointAndInvT():
+    pointL, pointR, point = ((0,1),(0,3),(1,2))
+    relP, relMag = RelativePoint(pointL, pointR, point)
+    print "RelativePointT Passed: " + relP
+    ivrp = InverseRelativePoint(pointL, pointR, relP, relMag)
+    print "InverseRelativePointT Passed " + ivrp
+    print 'Write better tests.'
+def InitTCalcCentMeanStdevT():
+    circles = [[(1,1),2], [(5,5),1]]
+    roguePoints = [[(1,1),(0,0)], [(2,2),(1,1)]]
+    joints = Initialize(circles, roguePoints)
+    print "InitializeT Passed: " + len(joints[0].pointList) + " " + len(joints[1].pointList)
+    retCenter = CalcCenterMeanStdev(joints[0].pointList, joints[0].centerMatrix)
+    print "CalcCenterMeanStdevT Passed:" + retCenter
+def WriteDataT():
+    import StringIO
+    output = StringIO.StringIO()
+    frame_idx = 0
+    joint = Joint()
+    joint.circle = [(0,0), 1]
+    joints = [joint, joint]
+    WriteData(frame_idx, joints, output)
+    print "WriteDataT Passed: " + output.getvalue()
+    output.close()
+def JointUpdateT():
+    circles = [[(1,1),2], [(5,5),1]]
+    roguePoints = [[(1,1),(0,0)], [(2,2),(1,1)], [(2.1,2),(1,1)], [(2,2),(1,-10)]]
+    joints = Initialize(circles, roguePoints)
+    joints[0].Update()
+    print "Joint.Update Passed: " + len(joints[0].pointList)
+def CalcMeanVecT():
+    return "CalcmeanVecT test not implemented yet."
+def CalcStdevT():
+    return "CalcStdevT test not implemented yet."
+def AddToJointsT():
+    print "AddToJointsT not implemented yet."
 def Test():
-    circle = [(10,10),1]
-
-    point = (12,12)
-    #Testing Joint.Update and Joint()
-    joint = Joint(circle)
-    pointList = [[(10,10), (11,10)], [(10,10), (11,10)], [(10,10), (10,11)], [(10,10), (10,11)], [(10,10), (9,9)]]# Two points going in the same direction, two another direction, and one backwards
-    joint.pointList = pointList
-    joint.Update()
-    print joint.pointList
-    #Testing InCircle
-    inCircleT = not InCircle(circle, point)
-    print inCircleT
-    #Testing CalcMeanVector
-    pointList = [[point, np.add(point,1)], [point, np.add(point,-1)]]
-    meanVec, meanMag, meanPerp = CalceMeanVec(pointList)
-    print meanVec
-    #Testing CalcStdev
-    stdev = CalcStdev(pointList, meanPerp)
-    print stdev
-    #Testing relativepoint and inverserelativepoint
-    pointLi = (2,0)
-    pointRi = (4,1)
-    center = (2,2)
-    relcent, relmag = RelativePoint(pointLi,pointRi, center)
-    print relcent, relmag
-    pointLf = (1,1)
-    pointRf = (0,2)
-    center = (2,2)
-    invrelcent = InverseRelativePoint(pointLf, pointRf, center, relmag)
-    print invrelcent
-    #Testing CalcCenterMeanStdev and initialize
-    circle2 =  [(11,10),2]
-    circles = [circle, circle2]
-    roguePoints = [(0,0), (1,1), (-1,-1), (-1,1), (1,-1)]
-    allJoints, centerMatrix = Initialize(circles, roguePoints)
-    print len(centerMatrix), len(centerMatrix[0]), len(centerMatrix[-1])
-    centeravg, centerstd = CalcCenterMeanStdev(roguePoints, centerMatrix)
-    print centeravg, centerstd
+    InCircleT()
+    RelativePointAndInvT()
+    InitTCalcCentMeanStdevT()
+    WriteDataT()
+    JointUpdateT()
+    CalcMeanVecT()
+    CalcStdevT()
+    AddToJointsT()
+# endregion
 
 def main():
     import sys
