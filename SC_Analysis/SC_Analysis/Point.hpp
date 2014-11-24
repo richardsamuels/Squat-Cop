@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <cmath>
 
 struct Point{
 	double x, y, z;
@@ -35,8 +36,17 @@ struct Point{
 };
 
 //Comparison functor
-struct PointLHSComparator {
-	bool operator()(const Point&, const Point&);
+struct LHSYLess {
+	bool operator()(const Point& lhs, const Point& rhs){
+		if (lhs.z == rhs.z){
+			if (lhs.y == rhs.y)
+				return lhs.x < rhs.x;
+			else
+				return lhs.y < rhs.y;
+		}
+		else
+			return lhs.z < rhs.z;
+	}
 };
 
 Point operator+(const Point&, const Point& );

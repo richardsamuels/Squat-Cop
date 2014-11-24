@@ -94,15 +94,3 @@ ostream& operator<<(ostream& os, const Point& p){
 		os << "(" << p.x << ", " << p.y << ", " << p.z << ")";
 	return os;
 }
-
-//Comparison functor
-bool PointLHSComparator::operator()(const Point& lhs, const Point& rhs){
-	if (lhs.z == rhs.z){
-		if (lhs.y == rhs.y)
-			return lhs.x < rhs.x;
-		else
-			return lhs.y < rhs.y;
-	}
-	else
-		return lhs.z < rhs.z;
-}

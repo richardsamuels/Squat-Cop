@@ -13,6 +13,15 @@
 #include "Frame.hpp"
 #include "helpers.hpp"
 
+#ifdef _DEBUG
+#define CATCH_CONFIG_RUNNER
+#include "catch.hpp"
+
+#include "PointTest.hpp"
+#include "FrontTest.hpp"
+#include "FrameTest.hpp"
+#endif
+
 using namespace std;
 
 //Remove up to start
@@ -25,6 +34,9 @@ using namespace std;
 
 int main(int argc, char* argv[])
 {
+#ifdef _DEBUG
+	int result = Catch::Session().run(argc, argv);
+#endif
 	//Test ReadFile
 	/*TestPoint();
 	TestFrame();

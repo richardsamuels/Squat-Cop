@@ -83,12 +83,20 @@
     <ClCompile Include="SC_Analysis.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="catch.hpp" />
     <ClInclude Include="constants.hpp" />
     <ClInclude Include="Frame.hpp" />
+    <ClInclude Include="FrameTest.hpp">
+      <FileType>CppHeader</FileType>
+    </ClInclude>
     <ClInclude Include="front.hpp" />
     <ClInclude Include="frontstructs.hpp" />
+    <ClInclude Include="FrontTest.hpp" />
     <ClInclude Include="helpers.hpp" />
     <ClInclude Include="Point.hpp" />
+    <ClInclude Include="PointTest.hpp">
+      <FileType>CppHeader</FileType>
+    </ClInclude>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

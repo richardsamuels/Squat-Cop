@@ -17,7 +17,7 @@ struct Frame{
 	Frame(const std::string&);
 
 	template<typename Functor>
-	void Organize(const Functor&);
+	inline void Organize(const Functor&);
 
 	Point& operator[](int);
 
@@ -27,5 +27,10 @@ struct Frame{
 
 	void push_back(const Point&);
 };
+
+template<typename Functor>
+inline void Frame::Organize(const Functor& f){
+	sort(pointList.begin(), pointList.end(), f);
+}
 
 #endif //SC_FRAME

@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <cfloat>
+#include <cmath>
+#include <exception>
 
 #include "Point.hpp"
 #include "Frame.hpp"
@@ -33,4 +36,4 @@ int CriticalPointIndex(const int, const std::vector<Frame>&, const bool, const i
 
 //Read output from python function that generates foot vectors
 double ReadPythonOut(const std::string&, Point&);
-#endif SC_HELPERS
+#endif //SC_HELPERS

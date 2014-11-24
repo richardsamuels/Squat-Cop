@@ -14,11 +14,6 @@ Frame::Frame(const string &fromFile){
 	}
 }
 
-template<typename Functor>
-void Frame::Organize(const Functor& f){
-	sort(pointList.begin(), pointList.end(), f);
-}
-
 Point& Frame::operator[](int i) {
 	if (i < 0){
 		i += pointList.size();

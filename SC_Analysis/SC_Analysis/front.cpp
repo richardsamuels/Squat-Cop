@@ -49,13 +49,13 @@ FormErrors CheckRep(const int startInd, const int endInd, vector<Frame>& frames,
 			Point lKnee = (frames[i][2] - frames[i][-2]);
 			double z2d = lFootr2 - lKnee.Dot(lKnee);
 			if (z2d < 0)
-				throw exception("Impossibly long shin.");
+				throw "Impossibly long shin.";
 			lKnee.z = -sqrt(z2d);//Z always negative?
 			//Right foot
 			Point rKnee = (frames[i][3] - frames[i][-1]);
 			z2d = rFootr2 - rKnee.Dot(lKnee);
 			if (z2d < 0)
-				throw exception("Impossibly long shin.");
+				throw "Impossibly long shin.";
 			lKnee.z = -sqrt(z2d);//Z always negative?
 			ofs << lKnee.x << ", " << lKnee.y << ", " << lKnee.z << "," << rKnee.x << ", " << rKnee.y << ", " << rKnee.z << endl;
 		}
@@ -82,10 +82,10 @@ FormErrors CheckRep(const int startInd, const int endInd, vector<Frame>& frames,
 //Check if knees follow the path that they're supposed to follow
 //DONT USE THIS!!
 KneeError CheckKnee(Point calibratedKnee, const Point& plane, const double radius, const double kneeThresh){
-	throw exception("Don't run this code!");
+	throw "Don't run this code!";
 	double z2d = radius * radius - calibratedKnee.Dot(calibratedKnee);
 	if (z2d < 0)
-		throw exception("Impossibly long shin.");
+		throw "Impossibly long shin.";
 	calibratedKnee.z = -sqrt(z2d);
 	double perpVal = calibratedKnee.Dot(plane) / radius;
 	//If the projection onto the perpendicular component (which points away from the body) is negative, the knees are pointing in. Otherwise, they're pointing out.

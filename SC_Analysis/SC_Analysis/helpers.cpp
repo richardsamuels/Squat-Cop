@@ -23,6 +23,7 @@ vector<Frame> ReadFile(const string &filename){
 	string line;
 	int count = 0;
 	while (getline(ifs, line)){
+		count += 1;
 		dirty.push_back(Frame(line));
 	}
 	ifs.close();
@@ -53,7 +54,7 @@ void RemoveUpToStart(vector<Frame>& frames, const int startFrame){
 		}
 	}
 	if (startFrameIndex == -1)
-		throw exception("Frame not found");
+		throw "Frame not found";
 	frames.erase(frames.begin(), frames.begin() + startFrameIndex + 1);
 }
 
@@ -171,7 +172,7 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 	}
 	if (indA != -1){
 		if (indB == -1)
-			throw exception("Video stopped mid squat, or person is dead.");
+			throw "Video stopped mid squat, or person is dead.";
 		else{
 			//Find the minimum value
 			float minValue = FLT_MAX;//Some large number
@@ -184,7 +185,7 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 				}
 			}
 			if (minIndex == -1)
-				throw exception("This shouldn't be executed.");
+				throw "This shouldn't be executed.";
 			return minIndex;
 		}
 
@@ -193,7 +194,7 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 		if (indB == -1)
 			return -1;//Flag that the video has finished.
 		else
-			throw exception("This should never execute.");
+			throw "This should never execute.";
 	}
 }
 
