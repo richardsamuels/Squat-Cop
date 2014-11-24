@@ -1,3 +1,6 @@
+#ifndef SC_TEST_POINT
+#define SC_TEST_POINT
+
 #include "catch.hpp"
 #include "Point.hpp"
 
@@ -30,3 +33,5 @@ TEST_CASE("Test Point", "[Point]") {
 
 
 }
+
+#endif // SC_TEST_POINT

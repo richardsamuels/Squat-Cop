@@ -1,3 +1,6 @@
+#ifndef SC_TEST_FRAME
+#define SC_TEST_FRAME
+
 #include "catch.hpp"
 
 
@@ -33,3 +36,5 @@ TEST_CASE("Test Frame", "[Frame]") {
 	//Overloaded operators
 	//Test to see if the different [] operators act as expected
 }
+
+#endif //SC_TEST_FRAME

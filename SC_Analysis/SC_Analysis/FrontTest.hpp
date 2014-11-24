@@ -1,3 +1,6 @@
+#ifndef SC_TEST_FRONT
+#define SC_TEST_FRONT
+
 #include "catch.hpp"
 
 
@@ -81,3 +84,5 @@ TEST_CASE("Test Front", "[Front]") {
 	}*/
 
 }
+
+#endif //SC_TEST_FRONT
