@@ -53,7 +53,7 @@ FormErrors CheckRep(const int startInd, const int endInd, vector<Frame>& frames,
 			lKnee.z = -sqrt(z2d);//Z always negative?
 			//Right foot
 			Point rKnee = (frames[i][3] - frames[i][-1]);
-			double z2d = rFootr2 - rKnee.Dot(lKnee);
+			z2d = rFootr2 - rKnee.Dot(lKnee);
 			if (z2d < 0)
 				throw exception("Impossibly long shin.");
 			lKnee.z = -sqrt(z2d);//Z always negative?
@@ -104,7 +104,7 @@ KneeError CheckKnee(Point calibratedKnee, const Point& plane, const double radiu
 vector<FormErrors> FrontAnalysis(vector<Frame>& frames, const double shoulderThresh, const double  r2Thresh, const int numCalPoints){
 	vector<FormErrors> formErrors;
 	//Normalize frames
-	for (int i = 0; i < frames.size(); ++i){
+	for (size_t i = 0; i < frames.size(); ++i){
 		NormalizeFrame(frames[i], -2, -1);
 	}//SCALE FRAMES
 	//Find all maxima and minima

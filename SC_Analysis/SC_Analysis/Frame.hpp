@@ -14,18 +14,18 @@ struct Frame{
 	std::vector<Point> pointList;
 	int number;
 
-	Frame(const std::string &fromFile);
+	Frame(const std::string&);
 
 	template<typename Functor>
-	void Organize(const Functor& f);
+	void Organize(const Functor&);
 
-	Point& operator[](int i);
+	Point& operator[](int);
 
-	const Point& operator[](int i) const;
+	const Point& operator[](int) const;
 
 	size_t size();
 
-	void push_back(const Point& p);
+	void push_back(const Point&);
 };
 
 #endif //SC_FRAME

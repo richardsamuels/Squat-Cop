@@ -9,7 +9,7 @@ Point::Point(const double rectangle[]){
 	z = 0;
 }
 
-Point::Point(double x = 0, double y = 0, double z = 0) : x(x), y(y), z(z){}
+Point::Point(double x, double y, double z) : x(x), y(y), z(z){}
 
 //Overloaded operators
 Point& Point::operator=(const Point &rhs){
@@ -96,7 +96,7 @@ ostream& operator<<(ostream& os, const Point& p){
 }
 
 //Comparison functor
-bool LHSYLess::operator()(const Point& lhs, const Point& rhs){
+bool PointLHSComparator::operator()(const Point& lhs, const Point& rhs){
 	if (lhs.z == rhs.z){
 		if (lhs.y == rhs.y)
 			return lhs.x < rhs.x;

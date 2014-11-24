@@ -1,10 +1,13 @@
 #include "helpers.hpp"
+#include "constants.hpp"
+#include "frontstructs.hpp"
+#include "front.hpp"
 #include "Point.hpp"
 
 using namespace std;
 
 //Constructs two new basis vectors, where points from left-right foot, and the other points orthogonal to it, predominatly in the y direction.
-void NewBasis(const Point& left, const Point& right, Point& xhat, Point& yhat, const bool yhatNegate = false){
+void NewBasis(const Point& left, const Point& right, Point& xhat, Point& yhat, const bool yhatNegate){
 	Point x = right - left;
 	xhat = x / x.Norm();
 	yhat.x = -xhat.y;
@@ -27,7 +30,7 @@ vector<Frame> ReadFile(const string &filename){
 }
 
 //Normalizes a frame, requiring specification of origin, next point, and direction for orthogonal vector.
-void NormalizeFrame(Frame& frame, const int originInd, const int otherInd, const bool yhatNegate = false){
+void NormalizeFrame(Frame& frame, const int originInd, const int otherInd, const bool yhatNegate){
 	//Last point is leftfoot, second to last point is right (video's left/right)
 	double curDist = (frame[otherInd] - frame[originInd]).Norm();
 	Point origin = Point(frame[originInd]);
@@ -56,9 +59,9 @@ void RemoveUpToStart(vector<Frame>& frames, const int startFrame){
 
 void ScaleFrames(vector<Frame>& frames, const float base, const int relIndR, const int relIndL){
 
-	for (int i = 0; i < frames.size(); ++i){
-		float scale = base / (frames[i][relIndR] - frames[i][relIndL]).Norm();
-		for (int j = 0; j < frames[i].size(); ++j){
+	for (size_t i = 0; i < frames.size(); ++i){
+		double scale = base / (frames[i][relIndR] - frames[i][relIndL]).Norm();
+		for (size_t j = 0; j < frames[i].size(); ++j){
 			frames[i][j] *= scale;
 		}
 	}
@@ -144,7 +147,7 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 	double initialHeight = abs(calibratedFrames[startFrame][0].y);//Arbitrarily choose one of the shoulders to follow
 	bool midSquat = false;
 	int indA = -1, indB = -1;
-	for (int i = startFrame; i < calibratedFrames.size(); ++i){
+	for (size_t i = startFrame; i < calibratedFrames.size(); ++i){
 		if (bottom){
 			if (abs(calibratedFrames[i][referencePoint].y) > initialHeight * BOTTOM_UP_FUDGE){
 				midSquat = true;
@@ -171,10 +174,10 @@ int CriticalPointIndex(const int startFrame, const vector<Frame>& calibratedFram
 			throw exception("Video stopped mid squat, or person is dead.");
 		else{
 			//Find the minimum value
-			float minValue = INT_MAX;//Some large number
+			float minValue = FLT_MAX;//Some large number
 			int minIndex = -1;
 			for (int i = indA; i < indB; ++i){
-				float temp = abs(calibratedFrames[i][0].y);
+				double temp = abs(calibratedFrames[i][0].y);
 				if (temp < minValue){
 					minValue = temp;
 					minIndex = i;
@@ -207,4 +210,5 @@ double ReadPythonOut(const string& line, Point& point){
 	afterComma = nextComma + 1;
 	nextComma = line.find(afterComma, ',');
 	point.z = stod(line.substr(afterComma, nextComma));
+	return ret;
 }
